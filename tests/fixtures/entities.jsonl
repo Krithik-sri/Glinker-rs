@@ -1,0 +1,5 @@
+{"entity_id": "Q1", "label": "insulin", "aliases": ["INS"], "description": "Peptide hormone", "entity_type": "hormone", "popularity": 90}
+{"entity_id": "Q2", "label": "TP53", "aliases": ["p53"], "description": "Tumor suppressor gene", "entity_type": "gene", "popularity": 80}
+{"entity_id": "Q3", "label": "diabetes", "aliases": [], "description": "Metabolic disease", "entity_type": "disease", "popularity": 70}
+{"entity_id": "Q4", "label": "glucose", "aliases": ["blood sugar"], "description": "Blood sugar", "entity_type": "chemical", "popularity": 60}
+{"entity_id": "Q5", "label": "cancer", "aliases": [], "description": "Tumor disease", "entity_type": "disease", "popularity": 50}

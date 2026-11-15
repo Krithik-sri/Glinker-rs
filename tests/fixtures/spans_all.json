@@ -1,0 +1,2 @@
+{"name": "e2e-spans-all", "template": "{label}: {description}", "entities": "entities.jsonl", "precompute_embeddings": true,
+ "l1": {"type": "gazetteer"}, "l2": {"mode": "all"}, "l3": {"model_dir": "models/linker", "model_id": "synthetic", "threshold": 0.5}}

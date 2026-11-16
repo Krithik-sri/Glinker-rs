@@ -1,0 +1,98 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  lean:
+    name: Lean4 proofs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install elan
+        run: |
+          curl -sSfL https://raw.githubusercontent.com/leanprover/elan/master/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+      - name: Type-check lean/GLinker.lean
+        working-directory: lean
+        run: lean GLinker.lean
+
+  rust:
+    name: Rust tests + offline E2E + parity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Python deps (ONNX Runtime 1.20 = ort 2.0.0-rc.9 ABI)
+        run: pip install onnxruntime==1.20.1 onnx tokenizers numpy scikit-learn rapidfuzz openai
+      - name: Locate libonnxruntime
+        run: |
+          D=$(python -c "import onnxruntime,os;print(os.path.dirname(onnxruntime.__file__)+'/capi')")
+          echo "ORT_LIB_LOCATION=$D" >> "$GITHUB_ENV"
+          echo "ORT_DYLIB_PATH=$(ls $D/libonnxruntime.so* | tail -1)" >> "$GITHUB_ENV"
+      - run: cargo test --release
+      - run: cargo build --release
+      - name: Reference values (sklearn / rapidfuzz) used by unit tests
+        run: |
+          python - <<'PY'
+          from sklearn.metrics import matthews_corrcoef as m
+          from rapidfuzz import fuzz
+          assert abs(m([1,1,1,0,0,0,0],[1,1,0,0,0,1,0]) - 0.4166666666666667) < 1e-12
+          assert abs(m(list("aabbcca"), list("abbccaa")) - 0.34375) < 1e-12
+          assert abs(fuzz.ratio("this is a test", "this is a test!") - 96.55172413793103) < 1e-9
+          assert abs(fuzz.ratio("insulin", "insuline") - 93.33333333333333) < 1e-9
+          print("reference values ok")
+          PY
+      - name: Synthetic GLiNER bi-encoder models
+        run: python tools/make_synthetic.py tests/fixtures/models/linker
+      - name: E2E link (simple / gazetteer / spans / NER-L1)
+        run: |
+          for c in simple gazetteer spans_all ner; do
+            echo "== $c"
+            ./target/release/glinker link tests/fixtures/$c.json "Insulin regulates glucose in patients with diabetes." "TP53 mutations cause cancer." \
+              | python -c "import json,sys; d=json.load(sys.stdin); print(d['stats']); assert d['stats']['total_mentions'] > 0"
+          done
+      - name: MCC eval (Rust == sklearn)
+        run: |
+          ./target/release/glinker eval tests/fixtures/gazetteer.json tests/fixtures/gold.jsonl | tee eval.json
+          ./target/release/glinker link tests/fixtures/gazetteer.json \
+            "$(python -c "import json;print(json.loads(open('tests/fixtures/gold.jsonl').readline())['text'])")" \
+            "$(python -c "import json;print(json.loads(open('tests/fixtures/gold.jsonl').readlines()[1])['text'])")" > out.json
+          python - <<'PY'
+          import json
+          from sklearn.metrics import matthews_corrcoef
+          rep = json.load(open("eval.json")); out = json.load(open("out.json"))
+          gold = [json.loads(l) for l in open("tests/fixtures/gold.jsonl") if l.strip()]
+          yt, yp = [], []
+          for g, d in zip(gold, out["entities"]):
+              gm = {(e["start"], e["end"]): e["entity_id"] for e in g["entities"]}
+              for x in d:
+                  yt.append(gm.pop((x["mention_start"], x["mention_end"]), "NIL"))
+                  yp.append(x["linked_entity"]["entity_id"] if x["linked_entity"] else "NIL")
+              for v in gm.values(): yt.append(v); yp.append("NIL")
+          sk = matthews_corrcoef(yt, yp)
+          print("rust", rep["mcc_mention"], "sklearn", sk)
+          assert abs(sk - rep["mcc_mention"]) < 1e-9
+          PY
+      - name: Parity vs independent numpy/onnxruntime reference
+        run: python tools/parity.py tests/fixtures/models/linker tests/fixtures/simple.json target/release/glinker
+      - name: OpenAI-compatible server smoke test
+        run: |
+          ./target/release/glinker serve tests/fixtures/gazetteer.json 127.0.0.1:8000 > serve.log 2>&1 &
+          SERVER=$!
+          trap 'kill $SERVER' EXIT
+          for i in $(seq 60); do curl -sf localhost:8000/health && break; sleep 0.5; done
+          python - <<'PY'
+          import json
+          from openai import OpenAI
+          c = OpenAI(base_url="http://127.0.0.1:8000/v1", api_key="x")
+          r = c.chat.completions.create(model="glinker-rs", messages=[{"role": "user", "content": "TP53 mutations cause cancer."}])
+          ids = [e["linked_entity"]["entity_id"] for e in json.loads(r.choices[0].message.content)["entities"][0] if e["linked_entity"]]
+          print(ids); assert "Q2" in ids
+          PY

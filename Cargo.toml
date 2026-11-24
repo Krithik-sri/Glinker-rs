@@ -9,13 +9,20 @@ license = "Apache-2.0"
 default = ["load-dynamic"]
 # Link ONNX Runtime at run time (set ORT_DYLIB_PATH). Works offline / in Colab with pip onnxruntime.
 load-dynamic = ["orp/load-dynamic", "ort/load-dynamic"]
+# Download ONNX Runtime at build time and link it (ort's old default). Off by
+# default: with load-dynamic the download was never used, only fetched.
+download-binaries = ["ort/download-binaries", "ort/copy-dylibs"]
 cuda = ["orp/cuda", "ort/cuda"]
 tensorrt = ["orp/tensorrt", "ort/tensorrt"]
 openvino = ["orp/openvino", "ort/openvino"]
 
 [dependencies]
-orp = "=1.0.0"
-ort = "=2.0.0-rc.9"
+orp = { version = "=1.0.0", default-features = false }
+# `default-features = false`: ort's defaults include `download-binaries`, which
+# fetches ONNX Runtime from parcel.pyke.io at build time; Cargo features are
+# additive, so if any crate in the graph keeps them, every build downloads.
+# The download is now this crate's `download-binaries` feature instead.
+ort = { version = "=2.0.0-rc.9", default-features = false, features = ["ndarray", "half"] }
 composable = "1.0"
 ndarray = "0.16"
 tokenizers = { version = "0.21", default-features = false, features = ["onig"] }
@@ -24,6 +31,12 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 axum = "0.7"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync"] }
+
+# orp 1.0.0 on crates.io turns on ort's download itself; the fork makes it a
+# feature. [patch] applies only when this crate is the root of the build, so
+# downstream crates add the same patch.
+[patch.crates-io]
+orp = { git = "https://github.com/dhaneshkk/orp", branch = "main" }
 
 [profile.release]
 lto = "thin"

@@ -911,8 +911,7 @@ dependencies = [
 [[package]]
 name = "orp"
 version = "1.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "e4988aa3d7fe73b735d283ce9ec2b2e881ca9178bceee750cf226a4cbf83f7d8"
+source = "git+https://github.com/dhaneshkk/orp?branch=main#53fe829239e706402237d25ae88650e7ec64e48f"
 dependencies = [
  "composable",
  "ndarray",
